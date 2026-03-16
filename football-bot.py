@@ -1,6 +1,5 @@
 import requests
 import telebot
-import re
 from datetime import datetime
 import time
 
@@ -12,127 +11,108 @@ TELEGRAM_TOKEN = "8189906948:AAEJngihjXV30o405ceIHiSO5qtoenF41Ac"
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-def get_page_content(url):
-    """Получает содержимое страницы"""
+def get_todays_matches():
+    """Получает ТОЛЬКО сегодняшние матчи"""
+    
+    # Используем сайт с расписанием на сегодня
+    url = "https://www.flashscorekz.com/football/today/"
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
     }
+    
     try:
         response = requests.get(url, headers=headers, timeout=10)
-        return response.text if response.status_code == 200 else None
+        if response.status_code == 200:
+            return parse_flashscore(response.text)
     except:
         return None
 
-def parse_championat():
-    """Парсит матчи с Championat.com"""
+def parse_flashscore(html):
+    """Парсит HTML FlashScore"""
     
-    # Прямые ссылки на матчи дня
-    urls = [
-        "https://www.championat.com/football/_england.html",
-        "https://www.championat.com/football/_spain.html", 
-        "https://www.championat.com/football/_germany.html",
-        "https://www.championat.com/football/_italy.html",
-        "https://www.championat.com/football/_russia.html"
+    # Список лиг которые нам нужны
+    target_leagues = [
+        "Premier League",
+        "LaLiga",
+        "Bundesliga",
+        "Serie A",
+        "Russian Premier",
+        "Brazilian Serie A",
+        "Championship"
     ]
     
     matches = []
+    lines = html.split('\n')
     
-    for url in urls:
-        content = get_page_content(url)
-        if content:
-            # Ищем названия лиг
-            if "england" in url:
-                league = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ"
-            elif "spain" in url:
-                league = "🇪🇸 Ла Лига"
-            elif "germany" in url:
-                league = "🇩🇪 Бундеслига"
-            elif "italy" in url:
-                league = "🇮🇹 Серия А"
-            elif "russia" in url:
-                league = "🇷🇺 РПЛ"
-            else:
-                league = "Другая лига"
+    current_league = ""
+    
+    for line in lines:
+        # Ищем названия лиг
+        for league in target_leagues:
+            if league in line:
+                current_league = league
+                break
+        
+        # Ищем матчи (паттерн: время, команды)
+        if "event__match" in line and current_league:
+            # Простой парсинг - ищем время и команды
+            time_match = re.search(r'\d{2}:\d{2}', line)
+            teams = re.findall(r'>([^<]+)</a>', line)
             
-            # Простой поиск матчей (по паттерну)
-            # Ищем что-то похожее на "Команда - Команда"
-            import re
-            pattern = r'([А-Яа-яA-Za-z\s]+)\s*[-–—]\s*([А-Яа-яA-Za-z\s]+)'
-            found = re.findall(pattern, content)
-            
-            for match in found[:5]:  # Берем первые 5 матчей
-                if len(match[0]) > 3 and len(match[1]) > 3:  # Фильтр коротких названий
-                    matches.append({
-                        'league': league,
-                        'home': match[0].strip(),
-                        'away': match[1].strip(),
-                        'time': "19:30",  # Время по умолчанию
-                    })
-            
-            time.sleep(1)  # Задержка
+            if time_match and len(teams) >= 2:
+                match = {
+                    'league': current_league,
+                    'time': time_match.group(),
+                    'home': teams[0],
+                    'away': teams[1],
+                    'date': datetime.now().strftime('%d.%m.%Y')
+                }
+                matches.append(match)
     
     return matches
 
-def analyze_match(match):
-    """Простой анализ матча"""
-    import random
-    
-    # Случайный прогноз для демонстрации
-    outcomes = ["П1", "X", "П2"]
-    totals = ["Тотал БОЛЬШЕ 2.5", "Тотал МЕНЬШЕ 2.5"]
-    
-    return {
-        'match': match,
-        'outcome': random.choice(outcomes),
-        'confidence': random.randint(55, 80),
-        'total': random.choice(totals),
-    }
-
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def start(message):
     text = f"""
-⚽ *Championat Parser* ⚽
-📅 {datetime.now().strftime('%d.%m.%Y')}
+⚽ *FlashScore Parser* ⚽
+📅 Сегодня: {datetime.now().strftime('%d.%m.%Y')}
 
 *Команды:*
-/matches - показать матчи
+/today - матчи на сегодня
 /help - помощь
 
-✅ Парсинг Championat.com
+✅ Парсинг FlashScore
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['help'])
-def help(message):
-    text = """
-🔍 *Как работает:*
-Бот собирает данные напрямую с Championat.com
-
-⚠️ Может работать медленно из-за задержек
-    """
-    bot.reply_to(message, text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['matches'])
-def get_matches(message):
-    bot.reply_to(message, "🔍 Парсю Championat.com... Подожди 10-15 секунд")
+@bot.message_handler(commands=['today'])
+def today_matches(message):
+    bot.reply_to(message, "🔍 Получаю сегодняшние матчи...")
     
-    matches = parse_championat()
+    matches = get_todays_matches()
     
     if not matches:
-        bot.reply_to(message, "❌ Не удалось найти матчи. Сайт мог измениться.")
+        bot.reply_to(message, "❌ Не удалось найти матчи или их нет сегодня")
         return
     
-    report = f"🔮 *МАТЧИ НА СЕГОДНЯ*\n\n"
+    # Группируем по лигам
+    leagues = {}
+    for match in matches:
+        if match['league'] not in leagues:
+            leagues[match['league']] = []
+        leagues[match['league']].append(match)
     
-    for match in matches[:10]:  # Показываем первые 10
-        analysis = analyze_match(match)
-        report += f"*{match['league']}*\n"
-        report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
-        report += f"   📈 {analysis['outcome']} ({analysis['confidence']}%)\n"
-        report += f"   ⚽ {analysis['total']}\n\n"
+    report = f"⚽ *МАТЧИ {datetime.now().strftime('%d.%m.%Y')}*\n\n"
+    
+    for league, matches_list in leagues.items():
+        report += f"*{league}:*\n"
+        for match in matches_list[:5]:  # Макс 5 матчей на лигу
+            report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
+        report += "\n"
     
     bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
 if __name__ == "__main__":
-    print("⚽ Championat Parser запущен")
+    print("⚽ FlashScore Parser запущен")
     bot.infinity_polling()
