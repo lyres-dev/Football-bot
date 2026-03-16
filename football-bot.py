@@ -2,9 +2,7 @@ import requests
 import telebot
 import re
 from datetime import datetime
-from bs4 import BeautifulSoup
 import time
-import threading
 
 # ============================================
 # ТВОИ ДАННЫЕ
@@ -14,66 +12,72 @@ TELEGRAM_TOKEN = "8189906948:AAEJngihjXV30o405ceIHiSO5qtoenF41Ac"
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Словарь лиг и их URL на Sports.ru
-LEAGUES = {
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ": "https://www.sports.ru/football/england/premier-league/",
-    "🇪🇸 Ла Лига": "https://www.sports.ru/football/spain/primera/",
-    "🇩🇪 Бундеслига": "https://www.sports.ru/football/germany/bundesliga/",
-    "🇮🇹 Серия А": "https://www.sports.ru/football/italy/serie-a/",
-    "🇷🇺 РПЛ": "https://www.sports.ru/football/russia/premier-league/",
-    "🇫🇷 Лига 1": "https://www.sports.ru/football/france/ligue-1/",
-}
-
-def parse_matches():
-    """Парсит матчи со Sports.ru"""
-    matches = []
+def get_page_content(url):
+    """Получает содержимое страницы"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
     }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        return response.text if response.status_code == 200 else None
+    except:
+        return None
+
+def parse_championat():
+    """Парсит матчи с Championat.com"""
     
-    for league_name, league_url in LEAGUES.items():
-        try:
-            print(f"Парсинг {league_name}...")
-            response = requests.get(league_url, headers=headers, timeout=10)
+    # Прямые ссылки на матчи дня
+    urls = [
+        "https://www.championat.com/football/_england.html",
+        "https://www.championat.com/football/_spain.html", 
+        "https://www.championat.com/football/_germany.html",
+        "https://www.championat.com/football/_italy.html",
+        "https://www.championat.com/football/_russia.html"
+    ]
+    
+    matches = []
+    
+    for url in urls:
+        content = get_page_content(url)
+        if content:
+            # Ищем названия лиг
+            if "england" in url:
+                league = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ"
+            elif "spain" in url:
+                league = "🇪🇸 Ла Лига"
+            elif "germany" in url:
+                league = "🇩🇪 Бундеслига"
+            elif "italy" in url:
+                league = "🇮🇹 Серия А"
+            elif "russia" in url:
+                league = "🇷🇺 РПЛ"
+            else:
+                league = "Другая лига"
             
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Ищем блоки с матчами
-                match_blocks = soup.find_all('div', class_='match-block')
-                
-                for block in match_blocks:
-                    # Парсим название команды
-                    home_team = block.find('span', class_='match-block__team-name_left')
-                    away_team = block.find('span', class_='match-block__team-name_right')
-                    
-                    # Парсим время
-                    time_elem = block.find('span', class_='match-block__time')
-                    
-                    if home_team and away_team and time_elem:
-                        match = {
-                            'league': league_name,
-                            'home': home_team.text.strip(),
-                            'away': away_team.text.strip(),
-                            'time': time_elem.text.strip(),
-                            'date': datetime.now().strftime('%d.%m.%Y')
-                        }
-                        matches.append(match)
-                        
-            time.sleep(1)  # Задержка чтобы не заблокировали
+            # Простой поиск матчей (по паттерну)
+            # Ищем что-то похожее на "Команда - Команда"
+            import re
+            pattern = r'([А-Яа-яA-Za-z\s]+)\s*[-–—]\s*([А-Яа-яA-Za-z\s]+)'
+            found = re.findall(pattern, content)
             
-        except Exception as e:
-            print(f"Ошибка при парсинге {league_name}: {e}")
-            continue
+            for match in found[:5]:  # Берем первые 5 матчей
+                if len(match[0]) > 3 and len(match[1]) > 3:  # Фильтр коротких названий
+                    matches.append({
+                        'league': league,
+                        'home': match[0].strip(),
+                        'away': match[1].strip(),
+                        'time': "19:30",  # Время по умолчанию
+                    })
+            
+            time.sleep(1)  # Задержка
     
     return matches
 
 def analyze_match(match):
-    """Анализирует матч и дает прогноз"""
-    # Здесь можно добавить анализ на основе статистики
-    # Пока даем случайные прогнозы для демонстрации
-    
+    """Простой анализ матча"""
     import random
+    
+    # Случайный прогноз для демонстрации
     outcomes = ["П1", "X", "П2"]
     totals = ["Тотал БОЛЬШЕ 2.5", "Тотал МЕНЬШЕ 2.5"]
     
@@ -82,20 +86,19 @@ def analyze_match(match):
         'outcome': random.choice(outcomes),
         'confidence': random.randint(55, 80),
         'total': random.choice(totals),
-        'total_confidence': random.randint(55, 75)
     }
 
 @bot.message_handler(commands=['start'])
 def start(message):
     text = f"""
-⚽ *Sports Parser Bot* ⚽
+⚽ *Championat Parser* ⚽
 📅 {datetime.now().strftime('%d.%m.%Y')}
 
 *Команды:*
-/parse - спарсить матчи
+/matches - показать матчи
 /help - помощь
 
-✅ Бот парсит данные со Sports.ru
+✅ Парсинг Championat.com
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
@@ -103,59 +106,33 @@ def start(message):
 def help(message):
     text = """
 🔍 *Как работает:*
-1. Бот заходит на Sports.ru
-2. Собирает матчи на сегодня
-3. Показывает прогнозы
+Бот собирает данные напрямую с Championat.com
 
-⚠️ Парсинг может занять 10-20 секунд
+⚠️ Может работать медленно из-за задержек
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['parse'])
-def parse_command(message):
-    bot.reply_to(message, "🔍 Парсю матчи со Sports.ru... Это займет около 30 секунд")
+@bot.message_handler(commands=['matches'])
+def get_matches(message):
+    bot.reply_to(message, "🔍 Парсю Championat.com... Подожди 10-15 секунд")
     
-    matches = parse_matches()
+    matches = parse_championat()
     
     if not matches:
-        bot.reply_to(message, "❌ Не удалось найти матчи. Возможно, сайт изменился.")
+        bot.reply_to(message, "❌ Не удалось найти матчи. Сайт мог измениться.")
         return
     
     report = f"🔮 *МАТЧИ НА СЕГОДНЯ*\n\n"
     
-    current_league = ""
-    for match in matches:
-        if match['league'] != current_league:
-            current_league = match['league']
-            report += f"\n*{current_league}*\n"
-        
+    for match in matches[:10]:  # Показываем первые 10
         analysis = analyze_match(match)
+        report += f"*{match['league']}*\n"
         report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
-        report += f"   📈 Прогноз: {analysis['outcome']} ({analysis['confidence']}%)\n"
+        report += f"   📈 {analysis['outcome']} ({analysis['confidence']}%)\n"
         report += f"   ⚽ {analysis['total']}\n\n"
     
-    # Разбиваем на части если слишком длинно
-    if len(report) > 4000:
-        parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
-        for part in parts:
-            bot.send_message(message.chat.id, part, parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, report, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: True)
-def echo(message):
-    bot.reply_to(message, "Используй /parse для получения матчей")
-
-# ============================================
-# ЗАПУСК
-# ============================================
+    bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("⚽ SPORTS PARSER BOT")
-    print("=" * 50)
-    print(f"🤖 Бот: @lyressports_bot")
-    print(f"📡 Парсинг: Sports.ru")
-    print("=" * 50)
-    
+    print("⚽ Championat Parser запущен")
     bot.infinity_polling()
