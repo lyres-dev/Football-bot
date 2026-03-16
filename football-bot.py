@@ -8,10 +8,9 @@ import schedule
 import threading
 
 # ============================================
-# ТВОИ ДАННЫЕ
+# ТВОИ ДАННЫЕ (ТОЛЬКО ТОКЕН ТЕЛЕГРАМ)
 # ============================================
 TELEGRAM_TOKEN = "8189906948:AAEJngihjXV30o405ceIHiSO5qtoenF41Ac"
-FOOTBALL_DATA_KEY = "a7ed4a97c64f488d93451b95c177eb68"
 # ============================================
 
 # Сброс вебхуков
@@ -19,263 +18,158 @@ requests.get(f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook?drop_p
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# ID лиг для Football-Data.org
+# ID лиг для TheSportsDB
 LEAGUES = {
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ": 2021,
-    "🇪🇸 Ла Лига": 2014,
-    "🇩🇪 Бундеслига": 2002,
-    "🇮🇹 Серия А": 2019,
-    "🇷🇺 РПЛ": 235,  # Может отличаться
-    "🇧🇷 Бразильская Серия А": 2013,
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип": 2016,
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Лига 1": 2024,
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Лига 2": 2025,
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ": "4328",
+    "🇪🇸 Ла Лига": "4335",
+    "🇩🇪 Бундеслига": "4331",
+    "🇮🇹 Серия А": "4332",
+    "🇷🇺 РПЛ": "4346",
+    "🇧🇷 Бразильская Серия А": "4344",
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип": "4329",
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Лига 1": "4339",
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Лига 2": "4340",
 }
 
 LEAGUE_NAMES = {v: k for k, v in LEAGUES.items()}
 predictions_db = {}
 
-print("⚽ Football Data Bot - ПОЛНАЯ ВЕРСИЯ")
+print("⚽ TheSportsDB Bot - БЕЗ КЛЮЧА")
 print(f"🤖 Бот: @lyressports_bot")
 print(f"📅 Дата: {datetime.now().strftime('%d.%m.%Y')}")
 
-def make_football_request(endpoint, params=None):
-    """Запрос к Football-Data.org API"""
-    url = f"https://api.football-data.org/v4/{endpoint}"
-    headers = {
-        "X-Auth-Token": FOOTBALL_DATA_KEY
-    }
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Ошибка API: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"Ошибка запроса: {e}")
-        return None
-
 def get_todays_matches():
-    """Получает матчи на сегодня"""
+    """Получает матчи на сегодня из TheSportsDB"""
     today = datetime.now().strftime("%Y-%m-%d")
-    params = {
-        "dateFrom": today,
-        "dateTo": today
-    }
-    data = make_football_request("matches", params)
-    if data and 'matches' in data:
-        return data['matches']
+    url = f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?day={today}&s=Soccer"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'events' in data and data['events']:
+                return data['events']
+    except Exception as e:
+        print(f"Ошибка: {e}")
+    
     return []
 
-def get_team_matches(team_id, limit=5):
+def get_team_history(team_id):
     """Получает последние матчи команды"""
-    params = {
-        "limit": limit,
-        "status": "FINISHED"
-    }
-    data = make_football_request(f"teams/{team_id}/matches", params)
-    if data and 'matches' in data:
-        return data['matches']
+    url = f"https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id={team_id}"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'results' in data and data['results']:
+                return data['results']
+    except Exception as e:
+        print(f"Ошибка: {e}")
+    
     return []
 
-def analyze_team_form(matches):
-    """Анализирует форму команды по последним матчам"""
-    if not matches:
-        return None
+def analyze_match(match):
+    """Анализирует матч и дает прогноз"""
+    match_id = match['idEvent']
+    home_team = match['strHomeTeam']
+    away_team = match['strAwayTeam']
+    match_time = match['strTime'] if 'strTime' in match else "00:00"
+    league_id = match['idLeague']
+    league_name = LEAGUE_NAMES.get(league_id, match.get('strLeague', 'Неизвестная лига'))
     
-    stats = {
-        'wins': 0,
-        'draws': 0,
-        'losses': 0,
-        'goals_scored': 0,
-        'goals_conceded': 0,
-        'both_scored': 0,
-        'total_matches': len(matches)
-    }
+    # Получаем историю команд
+    home_team_id = match['idHomeTeam']
+    away_team_id = match['idAwayTeam']
     
-    for match in matches:
-        # Определяем, где наша команда
-        if match['score']['winner'] == 'HOME_TEAM':
-            stats['wins'] += 1
-        elif match['score']['winner'] == 'AWAY_TEAM':
-            stats['losses'] += 1
-        else:
-            stats['draws'] += 1
-        
-        # Голы
-        stats['goals_scored'] += match['score']['fullTime']['home'] if match['score']['fullTime']['home'] else 0
-        stats['goals_conceded'] += match['score']['fullTime']['away'] if match['score']['fullTime']['away'] else 0
-        
-        # Обе забьют
-        if match['score']['fullTime']['home'] and match['score']['fullTime']['away']:
-            if match['score']['fullTime']['home'] > 0 and match['score']['fullTime']['away'] > 0:
-                stats['both_scored'] += 1
+    home_history = get_team_history(home_team_id)
+    away_history = get_team_history(away_team_id)
     
-    return stats
-
-def predict_match(match):
-    """ДЕТАЛЬНЫЙ АНАЛИЗ МАТЧА"""
-    home_team = match['homeTeam']
-    away_team = match['awayTeam']
-    match_time = match['utcDate'][11:16]
-    match_id = match['id']
-    league_id = match['competition']['id']
-    league_name = LEAGUE_NAMES.get(league_id, match['competition']['name'])
+    # Анализируем форму
+    home_form = analyze_team_form(home_history, home_team)
+    away_form = analyze_team_form(away_history, away_team)
     
-    # Получаем форму команд
-    home_matches = get_team_matches(home_team['id'], 5)
-    away_matches = get_team_matches(away_team['id'], 5)
-    
-    home_stats = analyze_team_form(home_matches)
-    away_stats = analyze_team_form(away_matches)
-    
-    if not home_stats or not away_stats:
-        return None
-    
-    # Расчет средних показателей
-    home_avg_scored = home_stats['goals_scored'] / home_stats['total_matches'] if home_stats['total_matches'] > 0 else 0
-    home_avg_conceded = home_stats['goals_conceded'] / home_stats['total_matches'] if home_stats['total_matches'] > 0 else 0
-    away_avg_scored = away_stats['goals_scored'] / away_stats['total_matches'] if away_stats['total_matches'] > 0 else 0
-    away_avg_conceded = away_stats['goals_conceded'] / away_stats['total_matches'] if away_stats['total_matches'] > 0 else 0
-    
-    # ПРОГНОЗ НА ИСХОД
-    home_strength = (home_avg_scored * 1.2) - (away_avg_conceded * 0.8) + 0.3
-    away_strength = (away_avg_scored * 1.2) - (home_avg_conceded * 0.8)
-    total_strength = home_strength + away_strength
-    
-    if total_strength > 0:
-        home_win_prob = (home_strength / total_strength) * 100
-        away_win_prob = (away_strength / total_strength) * 100
-    else:
-        home_win_prob = 40
-        away_win_prob = 40
-    
-    draw_prob = 100 - home_win_prob - away_win_prob
-    if draw_prob < 0:
-        draw_prob = 20
-    
-    if home_win_prob > 45:
+    # Прогноз на основе формы
+    if home_form['points'] > away_form['points']:
         outcome = "П1"
-        confidence = home_win_prob
-    elif away_win_prob > 45:
+        confidence = 60 + (home_form['points'] - away_form['points']) * 5
+    elif away_form['points'] > home_form['points']:
         outcome = "П2"
-        confidence = away_win_prob
+        confidence = 60 + (away_form['points'] - home_form['points']) * 5
     else:
         outcome = "X"
-        confidence = draw_prob
+        confidence = 40
     
-    # ПРОГНОЗ НА ТОТАЛ
-    expected_total = (home_avg_scored + away_avg_scored + home_avg_conceded + away_avg_conceded) / 2
-    
-    if expected_total > 2.7:
+    # Прогноз на тотал
+    total_goals = home_form['avg_goals'] + away_form['avg_goals']
+    if total_goals > 2.5:
         total_pred = "Тотал БОЛЬШЕ 2.5"
-        total_conf = min(85, 50 + (expected_total - 2.5) * 30)
-    elif expected_total < 2.3:
-        total_pred = "Тотал МЕНЬШЕ 2.5"
-        total_conf = min(85, 50 + (2.5 - expected_total) * 30)
+        total_conf = min(80, 50 + (total_goals - 2.5) * 20)
     else:
-        total_pred = "Тотал 2.5 (неопределенно)"
-        total_conf = 50
-    
-    # ПРОГНОЗ НА ОБЕ ЗАБЬЮТ
-    home_btts = (home_stats['both_scored'] / home_stats['total_matches'] * 100) if home_stats['total_matches'] > 0 else 0
-    away_btts = (away_stats['both_scored'] / away_stats['total_matches'] * 100) if away_stats['total_matches'] > 0 else 0
-    avg_btts = (home_btts + away_btts) / 2
-    
-    btts_pred = "Обе забьют - ДА" if avg_btts > 60 else "Обе забьют - НЕТ"
-    
-    # Форма команд для отображения
-    home_form_str = f"{home_stats['wins']}-{home_stats['draws']}-{home_stats['losses']}"
-    away_form_str = f"{away_stats['wins']}-{away_stats['draws']}-{away_stats['losses']}"
+        total_pred = "Тотал МЕНЬШЕ 2.5"
+        total_conf = min(80, 50 + (2.5 - total_goals) * 20)
     
     prediction = {
         'match_id': match_id,
-        'home': home_team['name'],
-        'away': away_team['name'],
+        'home': home_team,
+        'away': away_team,
         'time': match_time,
-        'date': match['utcDate'][:10],
         'league_name': league_name,
         'outcome': outcome,
-        'outcome_confidence': round(confidence, 1),
+        'confidence': round(min(confidence, 85), 1),
         'total': total_pred,
         'total_confidence': round(total_conf, 1),
-        'btts': btts_pred,
-        'home_form': home_form_str,
-        'away_form': away_form_str,
-        'home_avg': f"{home_avg_scored:.1f}/{home_avg_conceded:.1f}",
-        'away_avg': f"{away_avg_scored:.1f}/{away_avg_conceded:.1f}"
+        'home_form': f"{home_form['wins']}-{home_form['draws']}-{home_form['losses']}",
+        'away_form': f"{away_form['wins']}-{away_form['draws']}-{away_form['losses']}",
     }
     
     return prediction
 
-def check_match_result(match_id):
-    """Проверяет результат завершенного матча"""
-    data = make_football_request(f"matches/{match_id}")
-    if data:
-        return data
-    return None
-
-def generate_match_report(match_id):
-    """Генерирует отчет по матчу"""
-    global predictions_db
+def analyze_team_form(history, team_name):
+    """Анализирует форму команды по истории матчей"""
+    stats = {
+        'wins': 0, 'draws': 0, 'losses': 0,
+        'goals_scored': 0, 'goals_conceded': 0,
+        'points': 0, 'avg_goals': 0,
+        'matches': len(history[:5])  # Последние 5 матчей
+    }
     
-    if match_id not in predictions_db:
-        return "❌ Прогноз не найден"
+    for match in history[:5]:  # Берем последние 5 матчей
+        if match['strHomeTeam'] == team_name:
+            home_score = int(match['intHomeScore'] or 0)
+            away_score = int(match['intAwayScore'] or 0)
+            
+            stats['goals_scored'] += home_score
+            stats['goals_conceded'] += away_score
+            
+            if home_score > away_score:
+                stats['wins'] += 1
+                stats['points'] += 3
+            elif home_score == away_score:
+                stats['draws'] += 1
+                stats['points'] += 1
+            else:
+                stats['losses'] += 1
+        else:
+            home_score = int(match['intHomeScore'] or 0)
+            away_score = int(match['intAwayScore'] or 0)
+            
+            stats['goals_scored'] += away_score
+            stats['goals_conceded'] += home_score
+            
+            if away_score > home_score:
+                stats['wins'] += 1
+                stats['points'] += 3
+            elif away_score == home_score:
+                stats['draws'] += 1
+                stats['points'] += 1
+            else:
+                stats['losses'] += 1
     
-    pred = predictions_db[match_id]
-    match_data = check_match_result(match_id)
+    if stats['matches'] > 0:
+        stats['avg_goals'] = stats['goals_scored'] / stats['matches']
     
-    if not match_data or match_data['status'] != 'FINISHED':
-        return "⏳ Матч еще не завершен"
-    
-    # Результат
-    home_goals = match_data['score']['fullTime']['home']
-    away_goals = match_data['score']['fullTime']['away']
-    
-    if home_goals > away_goals:
-        actual_outcome = "П1"
-    elif away_goals > home_goals:
-        actual_outcome = "П2"
-    else:
-        actual_outcome = "X"
-    
-    total_goals = home_goals + away_goals
-    actual_total = "БОЛЬШЕ 2.5" if total_goals > 2.5 else "МЕНЬШЕ 2.5"
-    
-    both_scored = home_goals > 0 and away_goals > 0
-    actual_btts = "ДА" if both_scored else "НЕТ"
-    
-    outcome_icon = "✅" if actual_outcome == pred['outcome'] else "❌"
-    total_icon = "✅" if actual_total in pred['total'] else "❌"
-    btts_icon = "✅" if actual_btts == pred['btts'] else "❌"
-    
-    report = f"""
-📊 *ОТЧЕТ ПО МАТЧУ*
-━━━━━━━━━━━━━━━━
-🏆 {pred['league_name']}
-⚔️ {pred['home']} vs {pred['away']}
-📅 {pred['date']}
-
-*РЕЗУЛЬТАТ*
-{pred['home']} {home_goals} : {away_goals} {pred['away']}
-
-*СРАВНЕНИЕ С ПРОГНОЗОМ*
-📈 Исход: {pred['outcome']} ({pred['outcome_confidence']}%) {outcome_icon}
-   Факт: {actual_outcome}
-
-⚽ Тотал: {pred['total']} ({pred['total_confidence']}%) {total_icon}
-   Факт: {actual_total}
-
-🤝 Обе забьют: {pred['btts']} {btts_icon}
-   Факт: {actual_btts}
-
-📊 Статистика команд (до матча):
-🏠 {pred['home']}: {pred['home_form']} (ср. {pred['home_avg']})
-✈️ {pred['away']}: {pred['away_form']} (ср. {pred['away_avg']})
-━━━━━━━━━━━━━━━━
-"""
-    return report
+    return stats
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -283,39 +177,41 @@ def send_welcome(message):
 ⚽ *Lyres Sports Bot* ⚽
 📅 {datetime.now().strftime('%d.%m.%Y')}
 
-*Доступные команды:*
+*Команды:*
 /predict - прогнозы на сегодня
 /reports - отчеты по матчам
-/report_[ID] - отчет по конкретному матчу
-/stats - статистика прогнозов
+/test - проверка
 /help - помощь
 
-*Анализируемые лиги:* АПЛ, ЛаЛига, Бундеслига, Серия А, Бразилия, Чемпионшип
+✅ Работает без ключа API!
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     text = """
-🔍 *КАК РАБОТАЕТ:*
-• Анализ последних 5 матчей каждой команды
-• Учет забитых/пропущенных голов
-• Прогноз исхода с % уверенности
-• Прогноз тотала (Больше/Меньше 2.5)
-• Прогноз на "Обе забьют"
+🔍 *Как работает:*
+• Получает данные с TheSportsDB
+• Анализирует последние 5 матчей команд
+• Дает прогноз на исход и тотал
 
-📋 *После матчей используй:*
-/reports - все отчеты
-/report_12345 - конкретный матч
+📊 *Прогноз включает:*
+• Исход (П1, X, П2) с % уверенности
+• Тотал (Больше/Меньше 2.5)
+• Форму команд
 
-📊 *Статистика:*
-/stats - точность прогнозов
+📋 *После матчей:*
+/reports - увидишь точность прогнозов
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
+@bot.message_handler(commands=['test'])
+def test(message):
+    bot.reply_to(message, "✅ Бот работает! Использую TheSportsDB")
+
 @bot.message_handler(commands=['predict'])
 def predict(message):
-    bot.reply_to(message, "🔍 Анализирую матчи на сегодня...")
+    bot.reply_to(message, "🔍 Получаю матчи на сегодня...")
     
     global predictions_db
     predictions_db = {}
@@ -323,54 +219,33 @@ def predict(message):
     matches = get_todays_matches()
     
     if not matches:
-        bot.reply_to(message, "😴 Сегодня нет матчей")
+        bot.reply_to(message, "😴 Сегодня нет матчей в базе данных")
         return
     
     report = f"🔮 *ПРОГНОЗЫ НА {datetime.now().strftime('%d.%m.%Y')}*\n\n"
+    match_count = 0
     
     for match in matches:
-        if match['competition']['id'] in LEAGUES.values():
-            prediction = predict_match(match)
+        if match['idLeague'] in LEAGUES.keys():
+            prediction = analyze_match(match)
             if prediction:
                 predictions_db[prediction['match_id']] = prediction
                 report += f"*{prediction['league_name']}*\n"
                 report += f"⏰ {prediction['time']} {prediction['home']} vs {prediction['away']}\n"
-                report += f"   📈 Исход: {prediction['outcome']} ({prediction['outcome_confidence']}%)\n"
+                report += f"   📈 Исход: {prediction['outcome']} ({prediction['confidence']}%)\n"
                 report += f"   ⚽ Тотал: {prediction['total']} ({prediction['total_confidence']}%)\n"
-                report += f"   🤝 {prediction['btts']}\n"
                 report += f"   📊 Форма: {prediction['home_form']} | {prediction['away_form']}\n"
                 report += f"   🔑 `{prediction['match_id']}`\n\n"
+                match_count += 1
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown')
+    if match_count == 0:
+        bot.reply_to(message, "😴 В твоих лигах сегодня нет матчей")
+    else:
+        bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
 @bot.message_handler(commands=['reports'])
 def send_reports(message):
-    bot.reply_to(message, "📋 Собираю отчеты...")
-    
-    reports = []
-    for match_id in predictions_db.keys():
-        report = generate_match_report(match_id)
-        if "не завершен" not in report and "не найден" not in report:
-            reports.append(report)
-    
-    if not reports:
-        bot.reply_to(message, "⏳ Нет завершенных матчей")
-    else:
-        for report in reports:
-            bot.send_message(message.chat.id, report, parse_mode='Markdown')
-
-@bot.message_handler(commands=['report_'])
-def handle_report(message):
-    try:
-        match_id = int(message.text.split('_')[1])
-        report = generate_match_report(match_id)
-        bot.reply_to(message, report, parse_mode='Markdown')
-    except:
-        bot.reply_to(message, "❌ Используй: /report_12345")
-
-@bot.message_handler(commands=['stats'])
-def send_stats(message):
-    bot.reply_to(message, "📊 Статистика будет после первых матчей")
+    bot.reply_to(message, "📋 Функция отчетов будет добавлена в следующей версии")
 
 @bot.message_handler(func=lambda message: True)
 def echo(message):
@@ -380,35 +255,13 @@ def echo(message):
 # ЗАПУСК
 # ============================================
 
-def send_daily_predictions():
-    """Автоматический сбор прогнозов"""
-    global predictions_db
-    predictions_db = {}
-    matches = get_todays_matches()
-    for match in matches:
-        if match['competition']['id'] in LEAGUES.values():
-            prediction = predict_match(match)
-            if prediction:
-                predictions_db[prediction['match_id']] = prediction
-    print(f"✅ Прогнозы на {datetime.now().date()} сохранены")
-
-def run_scheduler():
-    schedule.every().day.at("09:00").do(send_daily_predictions)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
 if __name__ == "__main__":
     print("=" * 50)
-    print("⚽ ЗАПУСК ПОЛНОЙ ВЕРСИИ")
+    print("⚽ БЕЗКЛЮЧЕВАЯ ВЕРСИЯ ЗАПУЩЕНА")
     print("=" * 50)
-    print(f"📊 Лиг в базе: {len(LEAGUES)}")
     print(f"🤖 Бот: @lyressports_bot")
+    print("📡 Использую TheSportsDB")
+    print("✅ Ключ не требуется!")
+    print("=" * 50)
     
-    # Запуск планировщика
-    scheduler_thread = threading.Thread(target=run_scheduler)
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
-    
-    print("✅ Бот готов к работе!")
     bot.infinity_polling()
