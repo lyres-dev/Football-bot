@@ -1,8 +1,8 @@
 import requests
 import telebot
 from datetime import datetime
-import time
 import re
+import time
 
 # ============================================
 # ТВОИ ДАННЫЕ
@@ -11,17 +11,6 @@ TELEGRAM_TOKEN = "8189906948:AAEJngihjXV30o405ceIHiSO5qtoenF41Ac"
 # ============================================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-
-# ID лиг на Soccer365
-LEAGUES = {
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ": "england/premier-league",
-    "🇪🇸 Ла Лига": "spain/primera",
-    "🇩🇪 Бундеслига": "germany/bundesliga",
-    "🇮🇹 Серия А": "italy/serie-a",
-    "🇷🇺 РПЛ": "russia/premier-league",
-    "🇧🇷 Бразилия": "brazil/brasileiro",
-    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Чемпионшип": "england/championship",
-}
 
 def get_page_content(url):
     """Получает страницу"""
@@ -34,60 +23,72 @@ def get_page_content(url):
     except:
         return None
 
-def parse_soccer365():
-    """Парсит матчи с Soccer365.ru"""
-    all_matches = []
-    today = datetime.now().strftime("%Y-%m-%d")
+def parse_all_matches():
+    """Парсит ВСЕ матчи с главной страницы"""
     
-    for league_name, league_path in LEAGUES.items():
-        url = f"https://www.soccer365.ru/{league_path}/"
-        print(f"Парсинг {league_name}...")
+    url = "https://www.soccer365.ru/"
+    content = get_page_content(url)
+    
+    if not content:
+        return []
+    
+    matches = []
+    
+    # Разбиваем на строки
+    lines = content.split('\n')
+    
+    current_league = "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Другие лиги"
+    
+    for i, line in enumerate(lines):
+        # Ищем названия лиг
+        if 'class="live-title"' in line or 'class="league"' in line:
+            league_match = re.search(r'>([^<]+)</a>', line)
+            if league_match:
+                current_league = league_match.group(1).strip()
         
-        content = get_page_content(url)
-        if not content:
-            continue
-        
-        # Ищем блоки с матчами
-        matches = []
-        
-        # Простой поиск матчей по паттерну
-        pattern = r'(\d{2}:\d{2}).*?<a[^>]*>([^<]+)</a>.*?<a[^>]*>([^<]+)</a>'
-        found = re.findall(pattern, content, re.DOTALL)
-        
-        for match in found[:10]:  # Берем первые 10 матчей
-            if len(match) >= 3:
+        # Ищем матчи (время и команды)
+        if 'class="score">' in line or 'class="time"' in line:
+            # Ищем время
+            time_match = re.search(r'(\d{2}:\d{2})', line)
+            if not time_match:
+                continue
+            
+            # Ищем названия команд (они обычно в следующих строках)
+            home_team = ""
+            away_team = ""
+            
+            # Проверяем следующие несколько строк
+            for j in range(1, 5):
+                if i+j < len(lines):
+                    # Ищем ссылки на команды
+                    team_match = re.findall(r'<a[^>]*>([^<]+)</a>', lines[i+j])
+                    if len(team_match) >= 2:
+                        home_team = team_match[0].strip()
+                        away_team = team_match[1].strip()
+                        break
+            
+            if time_match and home_team and away_team:
                 matches.append({
-                    'league': league_name,
-                    'time': match[0],
-                    'home': match[1].strip(),
-                    'away': match[2].strip(),
+                    'league': current_league,
+                    'time': time_match.group(1),
+                    'home': home_team,
+                    'away': away_team,
+                    'date': datetime.now().strftime('%d.%m.%Y')
                 })
-        
-        all_matches.extend(matches)
-        time.sleep(1)  # Задержка
     
-    return all_matches
+    # Убираем дубликаты
+    unique_matches = []
+    seen = set()
+    
+    for match in matches:
+        key = f"{match['home']}-{match['away']}-{match['time']}"
+        if key not in seen:
+            seen.add(key)
+            unique_matches.append(match)
+    
+    return unique_matches
 
-def predict_match(match):
-    """Простой прогноз"""
-    import random
-    
-    # Анализируем названия команд для простоты
-    home_len = len(match['home'])
-    away_len = len(match['away'])
-    
-    # Если названия примерно равны
-    if abs(home_len - away_len) < 3:
-        if random.random() > 0.5:
-            return "П1", random.randint(55, 70)
-        else:
-            return "П2", random.randint(55, 70)
-    elif home_len > away_len:
-        return "П1", random.randint(60, 75)
-    else:
-        return "П2", random.randint(60, 75)
-
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def start(message):
     text = f"""
 ⚽ *Soccer365 Parser* ⚽
@@ -95,110 +96,59 @@ def start(message):
 
 *Команды:*
 /matches - все матчи на сегодня
-/epl - только АПЛ
-/laliga - только Ла Лига
-/bundesliga - только Бундеслига
-/seriea - только Серия А
-/rpl - только РПЛ
-/help - помощь
+/test - проверка
 
 ✅ Парсинг soccer365.ru
     """
     bot.reply_to(message, text, parse_mode='Markdown')
 
-@bot.message_handler(commands=['help'])
-def help(message):
-    text = """
-🔍 *Как работает:*
-1. Бот парсит soccer365.ru
-2. Показывает матчи на сегодня
-3. Дает прогнозы
-
-⚠️ Может работать медленно
-    """
-    bot.reply_to(message, text, parse_mode='Markdown')
+@bot.message_handler(commands=['test'])
+def test(message):
+    bot.reply_to(message, "✅ Бот работает! Пробуй /matches")
 
 @bot.message_handler(commands=['matches'])
-def all_matches(message):
-    bot.reply_to(message, "🔍 Парсю soccer365.ru... Это займет 20-30 секунд")
+def matches(message):
+    bot.reply_to(message, "🔍 Получаю матчи с soccer365.ru... Это займет 10-15 секунд")
     
-    matches = parse_soccer365()
+    matches = parse_all_matches()
     
     if not matches:
-        bot.reply_to(message, "❌ Не удалось найти матчи")
+        bot.reply_to(message, "❌ Не удалось найти матчи. Проверь доступность сайта.")
         return
     
-    report = f"⚽ *ВСЕ МАТЧИ НА {datetime.now().strftime('%d.%m.%Y')}*\n\n"
-    
-    current_league = ""
+    # Группируем по лигам
+    leagues = {}
     for match in matches:
-        if match['league'] != current_league:
-            current_league = match['league']
-            report += f"\n*{current_league}*\n"
-        
-        outcome, conf = predict_match(match)
-        report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
-        report += f"   📈 Прогноз: {outcome} ({conf}%)\n\n"
+        if match['league'] not in leagues:
+            leagues[match['league']] = []
+        leagues[match['league']].append(match)
     
-    bot.send_message(message.chat.id, report, parse_mode='Markdown')
-
-# Команды для отдельных лиг
-@bot.message_handler(commands=['epl'])
-def epl_matches(message):
-    bot.reply_to(message, "🔍 Парсю АПЛ...")
-    show_league_matches(message, "🏴󠁧󠁢󠁥󠁮󠁧󠁿 АПЛ")
-
-@bot.message_handler(commands=['laliga'])
-def laliga_matches(message):
-    bot.reply_to(message, "🔍 Парсю Ла Лигу...")
-    show_league_matches(message, "🇪🇸 Ла Лига")
-
-@bot.message_handler(commands=['bundesliga'])
-def bundesliga_matches(message):
-    bot.reply_to(message, "🔍 Парсю Бундеслигу...")
-    show_league_matches(message, "🇩🇪 Бундеслига")
-
-@bot.message_handler(commands=['seriea'])
-def seriea_matches(message):
-    bot.reply_to(message, "🔍 Парсю Серию А...")
-    show_league_matches(message, "🇮🇹 Серия А")
-
-@bot.message_handler(commands=['rpl'])
-def rpl_matches(message):
-    bot.reply_to(message, "🔍 Парсю РПЛ...")
-    show_league_matches(message, "🇷🇺 РПЛ")
-
-def show_league_matches(message, target_league):
-    matches = parse_soccer365()
+    report = f"⚽ *МАТЧИ НА {datetime.now().strftime('%d.%m.%Y')}*\n\n"
+    total = 0
     
-    league_matches = [m for m in matches if m['league'] == target_league]
+    for league, league_matches in leagues.items():
+        if league_matches:
+            report += f"*{league}*\n"
+            for match in league_matches[:5]:  # Макс 5 матчей на лигу
+                report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
+                total += 1
+            report += "\n"
     
-    if not league_matches:
-        bot.reply_to(message, f"❌ Матчей {target_league} не найдено")
-        return
+    report += f"\n📊 Всего матчей: {total}"
     
-    report = f"⚽ *{target_league}*\n\n"
-    for match in league_matches:
-        outcome, conf = predict_match(match)
-        report += f"⏰ {match['time']} {match['home']} vs {match['away']}\n"
-        report += f"   📈 {outcome} ({conf}%)\n\n"
-    
-    bot.send_message(message.chat.id, report, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: True)
-def echo(message):
-    bot.reply_to(message, "Используй /matches или /help")
-
-# ============================================
-# ЗАПУСК
-# ============================================
+    if len(report) > 4000:
+        parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
+        for part in parts:
+            bot.send_message(message.chat.id, part, parse_mode='Markdown')
+    else:
+        bot.send_message(message.chat.id, report, parse_mode='Markdown')
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("⚽ SOCCER365 PARSER")
+    print("⚽ SOCCER365 УНИВЕРСАЛЬНЫЙ ПАРСЕР")
     print("=" * 50)
     print(f"🤖 Бот: @lyressports_bot")
-    print(f"📡 Парсинг: soccer365.ru")
+    print("✅ Запущен...")
     print("=" * 50)
     
     bot.infinity_polling()
