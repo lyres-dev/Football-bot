@@ -45,7 +45,7 @@ LEAGUES = {
 
 LEAGUE_NAMES = {v: k for k, v in LEAGUES.items()}
 predictions_db = {}
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, skip_pending=True)
 
 def make_api_request(url, querystring):
     headers = {
