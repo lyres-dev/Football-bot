@@ -10,7 +10,7 @@ import threading
 # ============================================
 # ТВОИ ДАННЫЕ
 # ============================================
-TELEGRAM_TOKEN = "8625272420:AAGsmzyEYufDtRV70uocQhWLbHt8NwIZQv0"
+TELEGRAM_TOKEN = "8625272420:AAGUjyGKxx244b-5w-rOh5jr8cLoSGTZogY"
 RAPIDAPI_KEY = "dade7fd2cemsh3c92b6c8694bcfcp1f9dd7jsn3ac6634b0610"
 # ============================================
 
